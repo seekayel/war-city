@@ -33,20 +33,28 @@ class MainScene extends Phaser.Scene {
             return;
         }
 
+        // Calculate map size based on screen size with extra padding
+        const tileSize = 32;
+        const padding = 50; // Increased padding for larger world
+        const minMapWidth = 200; // Minimum map width in tiles
+        const minMapHeight = 200; // Minimum map height in tiles
+        const mapWidth = Math.max(minMapWidth, Math.ceil(this.cameras.main.width / tileSize) + (padding * 2));
+        const mapHeight = Math.max(minMapHeight, Math.ceil(this.cameras.main.height / tileSize) + (padding * 2));
+
         // Create a simple tilemap
         const map = this.make.tilemap({
-            tileWidth: 32,
-            tileHeight: 32,
-            width: 50,
-            height: 50
+            tileWidth: tileSize,
+            tileHeight: tileSize,
+            width: mapWidth,
+            height: mapHeight
         });
 
         // Create ground tile
         const groundGraphics = this.make.graphics();
         groundGraphics.fillStyle(0x4a4a4a); // Dark gray base
-        groundGraphics.fillRect(0, 0, 32, 32);
+        groundGraphics.fillRect(0, 0, tileSize, tileSize);
         groundGraphics.lineStyle(1, 0x666666); // Lighter gray for grid
-        groundGraphics.strokeRect(0, 0, 32, 32);
+        groundGraphics.strokeRect(0, 0, tileSize, tileSize);
         groundGraphics.fillStyle(0x555555); // Slightly lighter gray for texture
         for (let i = 0; i < 4; i++) {
             for (let j = 0; j < 4; j++) {
@@ -55,14 +63,14 @@ class MainScene extends Phaser.Scene {
                 }
             }
         }
-        groundGraphics.generateTexture('ground', 32, 32);
+        groundGraphics.generateTexture('ground', tileSize, tileSize);
 
         // Create beach tile
         const beachGraphics = this.make.graphics();
         beachGraphics.fillStyle(0xf2d2a9); // Sand color
-        beachGraphics.fillRect(0, 0, 32, 32);
+        beachGraphics.fillRect(0, 0, tileSize, tileSize);
         beachGraphics.lineStyle(1, 0xe6c39a); // Darker sand for grid
-        beachGraphics.strokeRect(0, 0, 32, 32);
+        beachGraphics.strokeRect(0, 0, tileSize, tileSize);
         beachGraphics.fillStyle(0xffe4c4); // Lighter sand for texture
         for (let i = 0; i < 4; i++) {
             for (let j = 0; j < 4; j++) {
@@ -71,14 +79,14 @@ class MainScene extends Phaser.Scene {
                 }
             }
         }
-        beachGraphics.generateTexture('beach', 32, 32);
+        beachGraphics.generateTexture('beach', tileSize, tileSize);
 
         // Create ocean tile
         const oceanGraphics = this.make.graphics();
         oceanGraphics.fillStyle(0x1e90ff); // Ocean blue
-        oceanGraphics.fillRect(0, 0, 32, 32);
+        oceanGraphics.fillRect(0, 0, tileSize, tileSize);
         oceanGraphics.lineStyle(1, 0x187bcd); // Darker blue for grid
-        oceanGraphics.strokeRect(0, 0, 32, 32);
+        oceanGraphics.strokeRect(0, 0, tileSize, tileSize);
         oceanGraphics.fillStyle(0x4169e1); // Lighter blue for texture
         for (let i = 0; i < 4; i++) {
             for (let j = 0; j < 4; j++) {
@@ -87,7 +95,7 @@ class MainScene extends Phaser.Scene {
                 }
             }
         }
-        oceanGraphics.generateTexture('ocean', 32, 32);
+        oceanGraphics.generateTexture('ocean', tileSize, tileSize);
 
         // Add tilesets
         const groundTileset = map.addTilesetImage('ground');
@@ -109,15 +117,23 @@ class MainScene extends Phaser.Scene {
             return;
         }
 
+        // Calculate the playable area boundaries
+        const playableStartX = padding;
+        const playableEndX = mapWidth - padding;
+        const playableStartY = padding;
+        const playableEndY = mapHeight - padding;
+
         // Fill the map with tiles
-        for (let x = 0; x < 50; x++) {
-            for (let y = 0; y < 50; y++) {
+        for (let x = 0; x < mapWidth; x++) {
+            for (let y = 0; y < mapHeight; y++) {
                 // Ocean edges
-                if (x < 2 || x > 47 || y < 2 || y > 47) {
+                if (x < playableStartX + 2 || x > playableEndX - 3 || 
+                    y < playableStartY + 2 || y > playableEndY - 3) {
                     oceanLayer.putTileAt(0, x, y);
                 }
                 // Beach
-                else if (x === 2 || x === 47 || y === 2 || y === 47) {
+                else if (x === playableStartX + 2 || x === playableEndX - 3 || 
+                         y === playableStartY + 2 || y === playableEndY - 3) {
                     beachLayer.putTileAt(0, x, y);
                 }
                 // Ground
@@ -131,8 +147,10 @@ class MainScene extends Phaser.Scene {
         oceanLayer.setCollisionByExclusion([-1]);
         beachLayer.setCollisionByExclusion([-1]);
 
-        // Create player
-        this.player = this.physics.add.sprite(400, 300, 'player');
+        // Create player at the center of the playable area
+        const centerX = Math.floor((playableStartX + playableEndX) / 2) * tileSize;
+        const centerY = Math.floor((playableStartY + playableEndY) / 2) * tileSize;
+        this.player = this.physics.add.sprite(centerX, centerY, 'player');
         if (!this.player) {
             console.error('Failed to create player sprite');
             return;
@@ -145,6 +163,14 @@ class MainScene extends Phaser.Scene {
         // Set up camera to follow player
         this.cameras.main.startFollow(this.player);
         this.cameras.main.setFollowOffset(0, -100); // Position camera above and behind player
+
+        // Set camera bounds to prevent seeing the edge of the map
+        this.cameras.main.setBounds(
+            padding * tileSize,
+            padding * tileSize,
+            (mapWidth - padding * 2) * tileSize,
+            (mapHeight - padding * 2) * tileSize
+        );
 
         // Set up cursor keys
         this.cursors = this.input.keyboard.createCursorKeys();
@@ -181,20 +207,39 @@ class MainScene extends Phaser.Scene {
     }
 }
 
-const config = {
-    type: Phaser.AUTO,
-    width: 800,
-    height: 600,
-    parent: 'game',
-    physics: {
-        default: 'arcade',
-        arcade: {
-            gravity: { y: 0 },
-            debug: false
-        }
-    },
-    scene: MainScene
+// Get the window size
+const getWindowSize = () => {
+    return {
+        width: window.innerWidth,
+        height: window.innerHeight
+    };
 };
 
+// Create the game configuration
+const createConfig = () => {
+    const size = getWindowSize();
+    return {
+        type: Phaser.AUTO,
+        width: size.width,
+        height: size.height,
+        parent: 'game',
+        physics: {
+            default: 'arcade',
+            arcade: {
+                gravity: { y: 0 },
+                debug: false
+            }
+        },
+        scene: MainScene
+    };
+};
+
+// Create and start the game
 console.log('Creating game instance');
-const game = new Phaser.Game(config); 
+const game = new Phaser.Game(createConfig());
+
+// Handle window resize
+window.addEventListener('resize', () => {
+    const size = getWindowSize();
+    game.scale.resize(size.width, size.height);
+}); 
