@@ -1,0 +1,17 @@
+{
+  "name": "war-city",
+  "version": "1.0.0",
+  "description": "A Phaser-based city game",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "phaser": "^3.70.0"
+  },
+  "devDependencies": {
+    "vite": "^5.1.4"
+  }
+} 

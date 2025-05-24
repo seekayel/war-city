@@ -1,0 +1,12 @@
+{
+  "allowed_commands": {
+    "in_project_directory": [
+      "mkdir",
+      "touch",
+      "ls",
+      "find",
+      "rm",
+      "mv"
+    ]
+  }
+} 
