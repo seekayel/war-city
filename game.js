@@ -146,6 +146,83 @@ class Zombie extends Phaser.Physics.Arcade.Sprite {
     }
 }
 
+class Ally extends Phaser.Physics.Arcade.Sprite {
+    constructor(scene, x, y) {
+        super(scene, x, y, 'ally');
+        this.scene = scene;
+        this.speed = 150; // Slightly slower than player
+        this.lastShot = 0;
+        this.shotCooldown = 1000; // Shoot every second
+    }
+
+    update() {
+        if (!this.active) return;
+
+        const player = this.scene.player;
+        
+        // Follow player at a distance
+        const distance = Phaser.Math.Distance.Between(
+            this.x, this.y,
+            player.x, player.y
+        );
+
+        // Keep a minimum distance from player
+        const minDistance = 64; // 2 tiles
+        if (distance > minDistance) {
+            const angle = Phaser.Math.Angle.Between(
+                this.x, this.y,
+                player.x, player.y
+            );
+            
+            this.scene.physics.velocityFromRotation(
+                angle,
+                this.speed,
+                this.body.velocity
+            );
+        } else {
+            this.setVelocity(0);
+        }
+
+        // Shoot in the same direction as player
+        const time = this.scene.time.now;
+        if (time > this.lastShot + this.shotCooldown) {
+            this.lastShot = time;
+            this.shoot();
+        }
+    }
+
+    shoot() {
+        const bolt = this.scene.healingBolts.get();
+        if (!bolt) return;
+
+        bolt.setPosition(this.x, this.y);
+        bolt.setActive(true);
+        bolt.setVisible(true);
+        bolt.setAlpha(1);
+        bolt.power = 1;
+
+        // Get player's movement direction or default to up
+        let angle = -90;
+        if (this.scene.player.body.velocity.x !== 0 || this.scene.player.body.velocity.y !== 0) {
+            angle = Phaser.Math.RadToDeg(
+                Math.atan2(this.scene.player.body.velocity.y, this.scene.player.body.velocity.x)
+            );
+        }
+
+        const speed = 400;
+        this.scene.physics.velocityFromRotation(
+            Phaser.Math.DegToRad(angle),
+            speed,
+            bolt.body.velocity
+        );
+
+        bolt.initialX = bolt.x;
+        bolt.initialY = bolt.y;
+        bolt.updateCallback = this.scene.updateBoltPower.bind(this.scene, bolt);
+        this.scene.events.on('update', bolt.updateCallback);
+    }
+}
+
 class MainScene extends Phaser.Scene {
     constructor() {
         super({ key: 'MainScene' });
@@ -207,6 +284,20 @@ class MainScene extends Phaser.Scene {
         this.zombies = this.physics.add.group({
             classType: Zombie,
             maxSize: 10
+        });
+
+        // Create ally texture
+        const allyGraphics = this.make.graphics();
+        allyGraphics.fillStyle(0x4169e1); // Blue color for ally
+        allyGraphics.fillCircle(8, 8, 8); // Circle for ally body
+        allyGraphics.lineStyle(2, 0x1e90ff); // Darker blue outline
+        allyGraphics.strokeCircle(8, 8, 8);
+        allyGraphics.generateTexture('ally', 16, 16);
+
+        // Create ally group
+        this.allies = this.physics.add.group({
+            classType: Ally,
+            maxSize: 20 // Allow for more allies than initial zombies
         });
 
         // Calculate map size based on screen size with extra padding
@@ -356,7 +447,12 @@ class MainScene extends Phaser.Scene {
         this.physics.add.collider(this.zombies, oceanLayer);
         this.physics.add.collider(this.zombies, beachLayer);
         this.physics.add.collider(this.zombies, this.zombies);
+        this.physics.add.collider(this.allies, oceanLayer);
+        this.physics.add.collider(this.allies, beachLayer);
+        this.physics.add.collider(this.allies, this.allies);
         this.physics.add.overlap(this.player, this.zombies, this.playerDeath, null, this);
+        this.physics.add.overlap(this.healingBolts, this.zombies, this.healZombie, null, this);
+        this.physics.add.collider(this.player, this.allies, this.handleAllyCollision, null, this);
 
         // Set up camera to follow player
         this.cameras.main.startFollow(this.player);
@@ -524,6 +620,26 @@ class MainScene extends Phaser.Scene {
 
         // Disable shooting
         this.spaceKey.enabled = false;
+    }
+
+    healZombie(bolt, zombie) {
+        // Convert zombie to ally
+        const ally = this.allies.get(zombie.x, zombie.y, 'ally');
+        if (ally) {
+            ally.setActive(true);
+            ally.setVisible(true);
+            zombie.setActive(false);
+            zombie.setVisible(false);
+            zombie.body.enable = false; // Prevent further collision with player
+        }
+        
+        // Destroy the bolt
+        this.destroyBolt(bolt);
+    }
+
+    handleAllyCollision(player, ally) {
+        // Prevent the ally from pushing the player
+        ally.setVelocity(0);
     }
 
     update() {
