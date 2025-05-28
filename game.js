@@ -150,7 +150,7 @@ class Ally extends Phaser.Physics.Arcade.Sprite {
     constructor(scene, x, y) {
         super(scene, x, y, 'ally');
         this.scene = scene;
-        this.speed = 150; // Slightly slower than player
+        this.speed = 200; // Match player speed
         this.lastShot = 0;
         this.shotCooldown = 1000; // Shoot every second
     }
@@ -159,39 +159,42 @@ class Ally extends Phaser.Physics.Arcade.Sprite {
         if (!this.active) return;
 
         const player = this.scene.player;
-        
-        // Follow player at a distance
+        // Follow player at a distance, but avoid crowding with other allies
         const distance = Phaser.Math.Distance.Between(
             this.x, this.y,
             player.x, player.y
         );
-
-        // Keep a minimum distance from player
         const minDistance = 64; // 2 tiles
+        let moveAngle = null;
         if (distance > minDistance) {
-            const angle = Phaser.Math.Angle.Between(
+            moveAngle = Phaser.Math.Angle.Between(
                 this.x, this.y,
                 player.x, player.y
             );
-            
+        }
+        // Avoid crowding with other allies
+        this.scene.allies.getChildren().forEach(other => {
+            if (other !== this && other.active) {
+                const d = Phaser.Math.Distance.Between(this.x, this.y, other.x, other.y);
+                if (d < 32) { // 1 tile
+                    // Move away from the other ally
+                    const away = Phaser.Math.Angle.Between(other.x, other.y, this.x, this.y);
+                    moveAngle = away;
+                }
+            }
+        });
+        if (moveAngle !== null) {
             this.scene.physics.velocityFromRotation(
-                angle,
+                moveAngle,
                 this.speed,
                 this.body.velocity
             );
         } else {
             this.setVelocity(0);
         }
-
-        // Shoot in the same direction as player
-        const time = this.scene.time.now;
-        if (time > this.lastShot + this.shotCooldown) {
-            this.lastShot = time;
-            this.shoot();
-        }
     }
 
-    shoot() {
+    shoot(angleOverride) {
         const bolt = this.scene.healingBolts.get();
         if (!bolt) return;
 
@@ -201,9 +204,12 @@ class Ally extends Phaser.Physics.Arcade.Sprite {
         bolt.setAlpha(1);
         bolt.power = 1;
 
-        // Get player's movement direction or default to up
-        let angle = -90;
-        if (this.scene.player.body.velocity.x !== 0 || this.scene.player.body.velocity.y !== 0) {
+        // Use the provided angle or default to up
+        let angle = typeof angleOverride === 'number' ? angleOverride : -90;
+        if (
+            angleOverride === undefined &&
+            (this.scene.player.body.velocity.x !== 0 || this.scene.player.body.velocity.y !== 0)
+        ) {
             angle = Phaser.Math.RadToDeg(
                 Math.atan2(this.scene.player.body.velocity.y, this.scene.player.body.velocity.x)
             );
@@ -424,7 +430,7 @@ class MainScene extends Phaser.Scene {
         }
 
         // Spawn zombies
-        for (let i = 0; i < 10; i++) {
+        for (let i = 0; i < 90; i++) {
             // Find a random position on the ground
             let x, y;
             do {
@@ -450,9 +456,10 @@ class MainScene extends Phaser.Scene {
         this.physics.add.collider(this.allies, oceanLayer);
         this.physics.add.collider(this.allies, beachLayer);
         this.physics.add.collider(this.allies, this.allies);
+        this.physics.add.collider(this.allies, this.zombies, this.allyZombieDisintegrate, null, this);
         this.physics.add.overlap(this.player, this.zombies, this.playerDeath, null, this);
         this.physics.add.overlap(this.healingBolts, this.zombies, this.healZombie, null, this);
-        this.physics.add.collider(this.player, this.allies, this.handleAllyCollision, null, this);
+        this.physics.add.collider(this.player, this.allies, this.handleAllyBump, null, this);
 
         // Set up camera to follow player
         this.cameras.main.startFollow(this.player);
@@ -480,33 +487,65 @@ class MainScene extends Phaser.Scene {
         });
         
         console.log('Create completed');
+
+        this.winShown = false;
+
+        // --- HUD Elements ---
+        this.zombieCounterText = this.add.text(16, 16, '', {
+            fontSize: '28px',
+            fill: '#fff',
+            stroke: '#000',
+            strokeThickness: 4
+        }).setScrollFactor(0);
+
+        this.clockText = this.add.text(this.cameras.main.width - 16, 16, '', {
+            fontSize: '28px',
+            fill: '#fff',
+            stroke: '#000',
+            strokeThickness: 4
+        }).setOrigin(1, 0).setScrollFactor(0);
+
+        this.startTime = this.time.now;
+    }
+
+    findClosestZombie(x, y) {
+        let minDist = Infinity;
+        let closest = null;
+        this.zombies.getChildren().forEach(zombie => {
+            if (zombie.active) {
+                const dist = Phaser.Math.Distance.Between(x, y, zombie.x, zombie.y);
+                if (dist < minDist) {
+                    minDist = dist;
+                    closest = zombie;
+                }
+            }
+        });
+        return closest;
     }
 
     shootBolt() {
         const time = this.time.now;
         if (time < this.lastShot + this.shotCooldown) return;
-        
         this.lastShot = time;
-
         // Get the bolt from the pool
         const bolt = this.healingBolts.get();
         if (!bolt) return;
-
         // Set bolt position to player position
         bolt.setPosition(this.player.x, this.player.y);
         bolt.setActive(true);
         bolt.setVisible(true);
         bolt.setAlpha(1); // Reset alpha
         bolt.power = 1; // Set initial power
-
-        // Calculate direction based on player's movement or default to up
-        let angle = -90; // Default to shooting up
-        if (this.player.body.velocity.x !== 0 || this.player.body.velocity.y !== 0) {
+        // Find the closest zombie
+        const closestZombie = this.findClosestZombie(this.player.x, this.player.y);
+        let angle;
+        if (closestZombie) {
             angle = Phaser.Math.RadToDeg(
-                Math.atan2(this.player.body.velocity.y, this.player.body.velocity.x)
+                Phaser.Math.Angle.Between(this.player.x, this.player.y, closestZombie.x, closestZombie.y)
             );
+        } else {
+            angle = -90; // Default to up if no zombies
         }
-
         // Set bolt velocity
         const speed = 400;
         this.physics.velocityFromRotation(
@@ -514,14 +553,18 @@ class MainScene extends Phaser.Scene {
             speed,
             bolt.body.velocity
         );
-
         // Store initial position for distance calculation
         bolt.initialX = bolt.x;
         bolt.initialY = bolt.y;
-
         // Add update callback for power fade
         bolt.updateCallback = this.updateBoltPower.bind(this, bolt);
         this.events.on('update', bolt.updateCallback);
+        // Allies shoot in the same direction
+        this.allies.getChildren().forEach(ally => {
+            if (ally.active) {
+                ally.shoot(angle);
+            }
+        });
     }
 
     updateBoltPower(bolt) {
@@ -535,8 +578,8 @@ class MainScene extends Phaser.Scene {
             bolt.y
         );
 
-        // Calculate power based on distance (20 tiles = 640 pixels)
-        const maxDistance = 640; // 20 tiles * 32 pixels
+        // Calculate power based on distance (10 tiles = 320 pixels)
+        const maxDistance = 320; // 10 tiles * 32 pixels
         const power = Math.max(0, 1 - (distance / maxDistance));
         
         // Update bolt properties
@@ -630,16 +673,40 @@ class MainScene extends Phaser.Scene {
             ally.setVisible(true);
             zombie.setActive(false);
             zombie.setVisible(false);
-            zombie.body.enable = false; // Prevent further collision with player
+            if (zombie.body) zombie.body.enable = false;
         }
-        
         // Destroy the bolt
         this.destroyBolt(bolt);
     }
 
-    handleAllyCollision(player, ally) {
-        // Prevent the ally from pushing the player
-        ally.setVelocity(0);
+    handleAllyBump(player, ally) {
+        // Push the ally away from the player
+        const angle = Phaser.Math.Angle.Between(player.x, player.y, ally.x, ally.y);
+        this.physics.velocityFromRotation(angle, 200, ally.body.velocity);
+        // Optionally, you can add a timer to slow the ally after a short burst
+        this.time.delayedCall(200, () => {
+            if (ally.active) ally.setVelocity(0);
+        });
+    }
+
+    allyZombieDisintegrate(ally, zombie) {
+        // Disintegration effect
+        const effect = this.add.graphics();
+        effect.fillStyle(0xffffff, 0.7);
+        effect.fillCircle(ally.x, ally.y, 20);
+        this.tweens.add({
+            targets: effect,
+            alpha: 0,
+            duration: 400,
+            onComplete: () => effect.destroy()
+        });
+        // Remove both sprites
+        ally.setActive(false);
+        ally.setVisible(false);
+        if (ally.body) ally.body.enable = false;
+        zombie.setActive(false);
+        zombie.setVisible(false);
+        if (zombie.body) zombie.body.enable = false;
     }
 
     update() {
@@ -653,6 +720,43 @@ class MainScene extends Phaser.Scene {
 
         // If player is dead, don't process movement or shooting
         if (!this.player.body.enable) return;
+
+        // WIN CONDITION: If all zombies are inactive
+        if (!this.winShown && this.zombies.countActive(true) === 0) {
+            this.winShown = true;
+            const winText = this.add.text(
+                this.cameras.main.centerX,
+                this.cameras.main.centerY,
+                'You Won',
+                {
+                    fontSize: '64px',
+                    fill: '#00ff00',
+                    stroke: '#000000',
+                    strokeThickness: 6
+                }
+            ).setOrigin(0.5).setScrollFactor(0);
+            const restartText = this.add.text(
+                this.cameras.main.centerX,
+                this.cameras.main.centerY + 80,
+                'Press R to Restart',
+                {
+                    fontSize: '32px',
+                    fill: '#ffffff',
+                    stroke: '#000000',
+                    strokeThickness: 4
+                }
+            ).setOrigin(0.5).setScrollFactor(0);
+            this.restartKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.R);
+        }
+
+        // If win screen is shown, stop all movement and return
+        if (this.winShown) {
+            this.player.setVelocity(0);
+            this.zombies.getChildren().forEach(zombie => zombie.setVelocity(0));
+            this.allies.getChildren().forEach(ally => ally.setVelocity(0));
+            // Do not update clock or allow movement
+            return;
+        }
 
         // Handle player movement
         const speed = 200;
@@ -689,6 +793,25 @@ class MainScene extends Phaser.Scene {
                 zombie.update();
             }
         });
+
+        // Update allies
+        this.allies.getChildren().forEach(ally => {
+            if (ally.active) {
+                ally.update();
+            }
+        });
+
+        // Update zombie counter
+        const zombiesLeft = this.zombies.countActive(true);
+        this.zombieCounterText.setText(`Zombies: ${zombiesLeft}`);
+
+        // Update clock
+        if (!this.winShown) {
+            const elapsed = Math.floor((this.time.now - this.startTime) / 1000);
+            const minutes = Math.floor(elapsed / 60).toString().padStart(2, '0');
+            const seconds = (elapsed % 60).toString().padStart(2, '0');
+            this.clockText.setText(`${minutes}:${seconds}`);
+        }
     }
 }
 
